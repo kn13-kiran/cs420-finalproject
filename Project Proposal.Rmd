@@ -1,0 +1,56 @@
+---
+title: "Project Proposal"
+output:
+  html_document: 
+    theme: readable
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### The names of the students who will be contributing to the group project
+
+Our group includes:Kiranmayee Nimashakavi, Gowri Shankar
+Ramanan, Stefani Moore, and Yun Ying (Lomis) Chen
+
+
+### A tentative title for the project.
+
+Predicting King County house prices with multiple linear regression.
+
+### Description of the data file (what they contain including number of variables and number of records).
+
+The data set contains a total of 21614 records of housing prices of
+Seattle King County, each with 21 columns/features/variables. Some
+example of the variables include price, bedrooms, bathrooms, sqft_living, sqft_lot, year of build, and etc
+
+
+```{r}
+
+train_df <- read.csv("train.csv")
+str(train_df)
+```
+
+###  Background information on the data sets, including specific citation of their source(so that I can also access it).
+
+The dataset contains house sale prices for King County, which is a
+county as part of seattle. The dataset includes homes sold between May 2014 and May 2015. Reference here: https://www.kaggle.com/harlfoxem/housesalesprediction
+
+
+### Statement of personal interest
+
+Statement of personal interest: A number of us have the aspiration to
+learn more about applying learnings from this course to the chosen housing data set, including but not limited to data prep/cleaning, data exploration,data modeling, model optimization including using
+forward/backwards/stepwise AIC/BIC, noise removals, as well as
+classification and etc
+
+
+### Evidence that data can be loaded into R
+
+```{r}
+head(train_df)
+
+```
+

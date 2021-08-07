@@ -409,6 +409,40 @@ kable(table,caption="Model Selection Table")
 
 ## Discussion
 
-Since the goal of this project is to predict house prices, we will choose the model with the least errors, which is the selected log model with the response and some predictors transformed and no influential observations. It might be harder to interpret due to the number of predictions, but it performs better than the full additive model without overfitting.  
+In comparing the various model across the various dimensions such as adjusted R squared, train RMSE, test RMSE, as well as number of predictors, our group determined that the selected add log res/pred model performs the best with the highest adjusted R_squared value since the goal of this project is to predict house prices no restriction/limitation on memory or performance. At first glance, it might be harder to interpret due to the number of predictors, but it appears performs better than the full additive model without overfitting,  although our experimentation with transformations on non-normal dependent variables into a normal shape became easier using box-cox transformation and this is also the model without any highly influential observations.  In addition to the current result, we could further experiment with featuring engineering neighborhood data with the latitude and longitude predictors to further categorize the house location and determine whether it belongs to an urban area or rural area to aid with predictions. Another route for exploration which expands beyond the scope of the goals of this project is to leverage the benefits of k-fold cross-validation, the average testing accuracy as a benchmark, as well as play with various training/test set split to help derive the optimal set of results.
 
+## Appendix
+
+### Interactions 
+
+We did not include the interactions explorations because we did not see any benefits plus it took too long to calculate.
+
+---
+
+One other thing to try is interactions. Let's perform a AIC backwards search from a model with 2 ways interactions to see what happens. Let's use the model without the collinear variables as the base since it is smaller it will be easier to compute the interactions.
+
+```{r eval=FALSE}
+full_int_model = lm(price ~ (. - sqft_living - sqft_above - yr_built)^2, data = kc_train_data)
+selected_int_model = step(full_int_model, trace = FALSE)
+```
+
+Let's check the model summary to see what all got added. 
+
+```{r eval=FALSE}
+summary(selected_int_model)
+```
+
+This seems like a lot. Let's compare with the full additive model and see which ones we prefer. We will also compare their LOOCV-RMSE scores and the adjusted $R^2$. 
+
+```{r eval=FALSE}
+anova(full_add_model, selected_int_model)[2, "Pr(>F)"] < 0.05
+
+table <- data.frame(Model = c("Interaction","Full Add"),
+         Adj_R_Squared = c(summary(selected_int_model)$adj.r.squared,summary(full_add_model)$adj.r.squared),
+         Loocv_RMSE = c(calc_loocv_rmse(selected_int_model),calc_loocv_rmse(full_add_model)),
+         Number_Predictors = c(length(coef(selected_int_model)) - 1, length(coef(full_add_model)) - 1))
+kable(table,caption="Model Selection Table")
+```
+
+At $ \alpha = 0.05 $, we reject the null hypothesis. This means we prefer the model with the interactions. That model also has a slightly lower LOOCV-RMSE value and a slightly higher Adjusted $R^2$, which is what we want. However, we do prefer smaller models, but before we choose one let's check the models` assumptions.
 

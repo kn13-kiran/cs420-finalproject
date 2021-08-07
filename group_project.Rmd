@@ -27,6 +27,7 @@ library(knitr)
 library(faraway)
 library(dplyr)
 library(GGally)
+library(MASS)
 ```
 
 ## Data Clean-Up
@@ -46,11 +47,13 @@ sum(is.na(kc_dataset))
 
 ## Changing the waterfront variable to be view and no-view instead of 1 and 0
 kc_dataset$waterfront = ifelse(kc_dataset$waterfront == 0, "no-view", "view")
-## Coerce variable to be factor
-kc_dataset$waterfront = as.factor(kc_dataset$waterfront)
 
-## Removing two variables that I consider to not be useful. Since we are keeping zipcode, lat and long are not as useful
-kc_dataset = kc_dataset %>% select(-date, -id, -lat, -long)
+## Coerce variables to be factor
+kc_dataset$waterfront = as.factor(kc_dataset$waterfront)
+kc_dataset$zipcode = as.factor(kc_dataset$zipcode)
+
+## Removing two variables that we consider to not be useful.
+kc_dataset = subset(kc_dataset, select = -c(id, date))
 ```
 
 ## Data Exploration
@@ -115,17 +118,9 @@ hist(kc_dataset$sqft_above, breaks = 20, main = "sqft_above", border="darkorange
 hist(kc_dataset$sqft_basement, breaks = 20, main = "sqft_basement", border="darkorange", col="dodgerblue")
 hist(kc_dataset$yr_built, breaks = 20, main = "yr_built", border="darkorange", col="dodgerblue")
 hist(kc_dataset$yr_renovated, breaks = 20, main = "yr_renovated", border="darkorange", col="dodgerblue")
-hist(kc_dataset$zipcode, breaks = 20, main = "zipcode", border="darkorange", col="dodgerblue")
 hist(kc_dataset$sqft_living15, breaks = 20, main = "sqft_living15", border="darkorange", col="dodgerblue")
 hist(kc_dataset$sqft_lot15, breaks = 20, main = "sqft_lot15", border="darkorange", col="dodgerblue")
 ```
-Since the majority of the values for both `sqft_basement` and `yr_renovated` are zeros, let's also go ahead and remove them from our dataset. 
-
-```{r}
-kc_dataset = kc_dataset %>% select(-sqft_basement, -yr_renovated)
-```
-
-
 ## Varible Correlation & Collinearity
 
 ```{r}
@@ -136,6 +131,37 @@ Based on this correlation map, we can see that `bathrooms`, `sqft_living`, `grad
 
 One other thing that sticks out is the `sqft_lot` and `sqft_living` seems to related to `sqft_lot15` and `sqft_living15` respectively. This also makes sense, since the house size and the lot size will usually follow the neighborhood house size trend. 
 We will be dealing with collinearity issues during variable selection.
+
+### Tranformations Identification
+Now, before we start modeling, we look at the pairs plots to see if any of the parameters are an obvious choice for transformations
+
+For the purpose of being able to see the plots clearly, we do two things for the visual of the pair plot:
+-Filter out the columns that have 35 or less discrete values, since they will probably not be candidates for transformations
+-Focus only on numeric columns
+
+```{r}
+predictor_unique_values = 35
+clean_df_numeric_only <- kc_dataset[,sapply(kc_dataset, is.numeric)]
+predictor_to_remove_for_plot <- c()
+removal_counter=1
+for(pred in colnames(clean_df_numeric_only)) {
+  k <- length(unique(clean_df_numeric_only[,pred])<predictor_unique_values)
+  if(k<predictor_unique_values){
+    predictor_to_remove_for_plot[removal_counter] <- pred
+    removal_counter <- removal_counter+1
+  }
+}
+# as zipcode needs to be used as a categorical variable.
+predictor_to_remove_for_plot[removal_counter]<-"zipcode"
+predictor_to_remove_for_plot
+
+plot_predictors <- colnames(clean_df_numeric_only)[!(colnames(clean_df_numeric_only) %in% predictor_to_remove_for_plot)]
+housing_data_clean_df_for_plot <- subset(clean_df_numeric_only, select = as.vector(eval(plot_predictors)))
+
+ggpairs( housing_data_clean_df_for_plot, ggplot2::aes(color=I("sea green")), title = "ggpairs plot to see correlation and distribution", lower = list(continuous = wrap("smooth")), axisLabels = "show", switch = "both")
+```
+
+We make the following observations from the plot: Potential for transformations `price`,  `sqft_living` , `sqft_lot`, `sqft_basement`, `yr_built`,  `lat`, `long`
 
 ## Model Building
 
@@ -155,25 +181,25 @@ full_model = lm(price ~., data = kc_train_data)
 ## Fit the model with only the good predictors we found earlier
 good_preds_model = lm(price ~ bathrooms + sqft_living + grade + sqft_above + sqft_living15, data = kc_train_data)
 
+summary(good_preds_model)$adj.r.squared
+
 anova(good_preds_model, full_model)$"Pr(>F)"[2] < 0.10
 
 ```
-At $ \alpha = 0.10$, we reject the null hypothesis. This means we prefer the larger model with all the variables. So clearly we are missing some more predictors.
+At $ \alpha = 0.10 $, we reject the null hypothesis. This means we prefer the larger model with all the variables. So clearly we are missing some more predictors.
 
-```{r}
-summary(full_model)
-```
 Let's check the variance inflation factor to find the highly correlated predictors. 
 
 ```{r warning=FALSE}
 vif(full_model)
 ```
-In practice, we worry more about the VIF values that are greater than 5. So we will be removing the following variables from our model `sqft_living` and `sqft_above`.
 
-Let do a backwards search to find what is the best combination of those predictors minus the ones we are excluding due to collinearity issue. 
+In practice, we worry more about the VIF values that are greater than 5. So we will be removing the following variables from our model `sqft_living`, `sqft_above`, `sqft_basement`, `yr_build`, and `yr_renovated`.
+
+Let do a backwards AIC search to find what is the best combination of those predictors minus the ones we are excluding due to collinearity issue. 
 
 ```{r}
-full_model = lm(price ~ . - sqft_living - sqft_above, data = kc_train_data)
+full_model = lm(price ~ . - sqft_living - sqft_above - sqft_basement - yr_built - yr_renovated  , data = kc_train_data)
 selected_no_coll = step(full_model, trace = FALSE)
 ```
 
@@ -182,15 +208,17 @@ Let's also do an anova test to see which model is better the selected or the ful
 ```{r}
 full_add_model = lm(price ~ ., data = kc_train_data)
 anova(selected_no_coll, full_add_model)[2, "Pr(>F)"] < 0.05
+summary(selected_no_coll)$adj.r.squared
+summary(full_add_model)$adj.r.squared
 ```
 
-Okay, this is interesting. If we were to follow the anova test, we would pick the bigger model. However, we know the bigger model had collinearity issues. Let's check the summary of the full model to see if collinearity is affecting the p-values of the predictors. 
+Okay, this is interesting. If we were to follow the anova test, we would pick the bigger model. Also, the bigger model also has a higher adjusted $R^2$. However, we know the bigger model had collinearity issues. Let's check the summary of the full model to see if collinearity is affecting the p-values of the predictors. 
 
 ```{r}
 summary(full_add_model)
 ```
 
-It seems to affect the some predictors such as `zipcode` and `sqft_lot`. 
+It seems to affect the some predictors such as `zipcode`.
 
 Let's compare the cross validation RMSE for both the models. Maybe it will help us pick one.
 
@@ -203,7 +231,58 @@ calc_loocv_rmse = function(model) {
 calc_loocv_rmse(selected_no_coll)
 calc_loocv_rmse(full_add_model)
 ```
-The selected model has a LOOCV-RMSE value of `r calc_loocv_rmse(selected_no_coll)` and the full additive model has a value of `r calc_loocv_rmse(full_add_model)`, which is smaller than the selected model. Thus, Considering that both the anova test and the LOOCV-RMSE test suggest that the full model is better, we will proceed with the full model. 
+The selected model has a LOOCV-RMSE value of `r calc_loocv_rmse(selected_no_coll)` and the full additive model has a value of `r calc_loocv_rmse(full_add_model)`, which is smaller than the selected model. Thus, Considering that both the anova test, the LOOCV-RMSE test and the adjusted $R^2$ suggest that the full model is better, we will proceed with the full model. 
+
+#### AIC Backwards Selection 
+
+Let's try a AIC backwards selection on the full.
+
+```{r}
+selected_add_model = step(full_add_model, trace = FALSE)
+
+```
+
+Let's compare this model with the full model:
+
+```{r}
+anova(selected_add_model, full_model)[2, "Pr(>F)"] < 0.05
+summary(selected_add_model)$adj.r.squared
+summary(full_add_model)$adj.r.squared
+
+calc_loocv_rmse(selected_add_model)
+calc_loocv_rmse(full_add_model)
+```
+Interesting, they have the same adjusted $R^@$ and same LOOCV-RMSE values. The anova test does suggest the full model is better tho at $ \alpha = 0.05 $.
+
+### Tranformations of Predictors
+
+We will identify the lambda transformations for the predictors we identified during data exploration and using those variables as response, fit the model, but keep `log(price)` in the predictor with others.
+
+```{r}
+m3 <- lm("sqft_living~.-price+log(price)", data = kc_train_data)
+boxcox(m3,xlab = "lambda for sqft_living")
+
+m3 <- lm("sqft_lot~.-price+log(price)", data = kc_train_data)
+boxcox(m3,xlab = "lambda for sqft_lot")
+
+m3 <- lm("yr_built~.-price+log(price)", data = kc_train_data)
+boxcox(m3,xlab = "lambda for yr_built")
+
+```
+
+Based on the graphs above, We should apply y^2 transformation to `sqrt_lot` and `sqrt_living`.  Let's do that:
+
+```{r}
+add_model_pred_trans = lm(price ~ . - sqft_lot - sqft_living + log(sqft_lot) + log(sqft_living), data = kc_train_data)
+
+summary(add_model_pred_trans)$adj.r.squared
+summary(full_add_model)$adj.r.squared
+
+calc_loocv_rmse(add_model_pred_trans)
+calc_loocv_rmse(full_add_model)
+```
+
+As seen above, the model with the transformations has a higher adjusted $R^2$ and a lower LOOCV-RMSE. 
 
 ### Influential Observations
 
@@ -221,7 +300,7 @@ Let's try removing them and building a new model then checking the model's perfo
 obs_to_remove_idx = which(cooks.distance(full_add_model) > 4 / length(cooks.distance(full_add_model)))
 kc_train_data_infl_rmvd = kc_train_data[-obs_to_remove_idx,]
 
-full_add_model_infl_rmvd = lm(price ~ ., data = kc_train_data)
+full_add_model_infl_rmvd = lm(price ~ ., data = kc_train_data_infl_rmvd)
 
 summary(full_add_model_infl_rmvd)$adj.r.squared
 summary(full_add_model)$adj.r.squared
@@ -231,33 +310,9 @@ calc_loocv_rmse(full_add_model)
 calc_loocv_rmse(full_add_model_infl_rmvd)
 ```
 
-As seen above, the full additive model with all the observations have the same Adjusted $R^2$ of `r summary(full_add_model)$adj.r.squared` and the same LOOCV-RMSE score of  `r calc_loocv_rmse(full_add_model)`. Thus removing the influential points did nothing for model performance, so we will be keeping them. 
+As seen above, the full new additive model without the influential observations has a adjusted $R^2$ of `r summary(full_add_model_infl_rmvd)$adj.r.squared` which is better than the full additive model which has a value of `r summary(full_add_model)$adj.r.squared`. 
 
-### Interactions 
-One other thing to try is interactions. Let's perform a backwards search from a model with 2 ways interactions to see what happens. Let's use the model without the collinear variables as the base since it is smaller it will be easier to compute the interactions.
-
-```{r}
-full_int_model = lm(price~ (. - sqft_living - sqft_above - yr_built)^2, data = kc_train_data)
-selected_int_model = step(full_int_model, trace = FALSE)
-```
-
-Let's check the model summary to see what all got added. 
-
-```{r}
-summary(selected_int_model)
-```
-This seems like a lot. Let's compare with the full additive model and see which ones we prefer. We will also compare their LOOCV-RMSE scores and the adjusted $R^2$. 
-
-```{r}
-anova(full_add_model, selected_int_model)[2, "Pr(>F)"] < 0.05
-
-table <- data.frame(Model = c("Interaction","Full Add"),
-         Adj_R_Squared = c(summary(selected_int_model)$adj.r.squared,summary(full_add_model)$adj.r.squared),
-         Loocv_RMSE = c(calc_loocv_rmse(selected_int_model),calc_loocv_rmse(full_add_model)),
-         Number_Predictors = c(length(coef(selected_int_model)) - 1, length(coef(full_add_model)) - 1))
-kable(table,caption="Model Selection Table")
-```
-At $ \alpha = 0.05 $, we reject the null hypothesis. This means we prefer the model with the interactions. That model also has a slightly lower LOOCV-RMSE value and a slightly higher Adjusted $R^2$, which is what we want. However, we do prefer smaller models, but before we choose one let's check the models` assumptions. 
+The LOOCV-RMSE score for the model without influential observations, `r calc_loocv_rmse(full_add_model_infl_rmvd)` is also much lower than the full model, `r calc_loocv_rmse(full_add_model)`. So we will proceed with the data without the influential points. 
 
 ### Model Assumptions
 
@@ -283,83 +338,69 @@ diagnostics = function(model, pcol = "grey", lcol = "dodgerblue", alpha = 0.05, 
 }
 ```
 
-
-Now let's check our assumptions of the interaction model. 
-```{r}
-diagnostics(selected_int_model, testit = FALSE)
-```
-
-We can see that equal variance assumption does not hold as well as the normality assumption. Both plots show this very clearly. Let's try adding some transformation of the response and see what happens. 
-
-```{r}
-int_model_log = lm(log(price) ~ bedrooms + bathrooms + sqft_lot + floors + 
-    waterfront + view + condition + grade + zipcode + sqft_living15 + 
-    sqft_lot15 + bedrooms:bathrooms + bedrooms:sqft_lot + bedrooms:floors + 
-    bedrooms:waterfront + bedrooms:view + bedrooms:grade + bedrooms:zipcode + 
-    bedrooms:sqft_living15 + bathrooms:sqft_lot + bathrooms:floors + 
-    bathrooms:waterfront + bathrooms:view + bathrooms:grade + 
-    bathrooms:zipcode + bathrooms:sqft_living15 + sqft_lot:floors + 
-    sqft_lot:view + sqft_lot:grade + sqft_lot:zipcode + sqft_lot:sqft_lot15 + 
-    floors:waterfront + floors:condition + floors:zipcode + floors:sqft_living15 + 
-    floors:sqft_lot15 + waterfront:condition + waterfront:grade + 
-    waterfront:zipcode + waterfront:sqft_living15 + waterfront:sqft_lot15 + 
-    view:condition + view:grade + condition:zipcode + condition:sqft_living15 + 
-    condition:sqft_lot15 + grade:zipcode + grade:sqft_living15 + 
-    grade:sqft_lot15 + zipcode:sqft_living15 + zipcode:sqft_lot15, 
-    data = kc_train_data)
-
-diagnostics(int_model_log, testit = FALSE)
-```
-
-The graphs look much better now! This seems to be the way to go! Now let's check the assumptions of the full additive model.
+Now let's check the assumptions of the full additive model.
 
 ```{r}
 diagnostics(full_add_model, testit = FALSE)
 ```
 
-Similar to the full interaction model, we can see that both assumptions of equal variance and normality don't hold. 
+We can see that both assumptions of equal variance and normality don't hold. 
 
-Let's try the same approach of transforming the response. 
+Let's try the transforming the response. 
 
 ```{r}
-full_add_log_model = lm(log(price) ~ ., data = kc_train_data)
+full_add_log_model = lm(log(price) ~ ., data = kc_train_data_infl_rmvd)
 
 diagnostics(full_add_log_model, testit = FALSE)
 ```
 
-Again the graphs look much better. Still unclear which model to choose tho. 
+The graphs look much better. Transforming the response is the way to go. 
 
-### Test RMSE
+### Putting it all together
 
-Let's compare the test RMSE of both interaction and additive models. 
+Let's create a model that both transforms the response and the selected predictors, with no influential observations. 
+```{r}
+add_log = lm(log(price) ~ . - sqft_lot - sqft_living + log(sqft_lot) + log(sqft_living), data = kc_train_data_infl_rmvd)
+
+summary(add_log)$adj.r.squared
+```
+Let's do a AIC backwards each to see if we can decrease the number of predictors even further.
 
 ```{r}
-table = data.frame(Model = c("Interaction", "Full Add"),
-                   Train_RMSE = c(sqrt(mean((kc_train_data$price - predict(full_int_model, kc_train_data)) ^ 2)),
-                                  sqrt(mean((kc_train_data$price - predict(full_add_model, kc_train_data)) ^ 2))),
-                   Test_RMSE = c(sqrt(mean((kc_test_data$price - predict(full_int_model, kc_test_data)) ^ 2)), 
-                                 sqrt(mean((kc_test_data$price - predict(full_add_model, kc_test_data)) ^ 2)))
-)
-kable(table, caption = "RMSE")
+selected_add_log = step(add_log, trace=FALSE)
+
+summary(selected_add_log)$adj.r.squared
 ```
-Again, the interaction model seems to be better with a lower RMSE on test data. Both don't seem to be overfitting or underfitting. So either one we choose would be fine I believe. 
+This selected model does not seem to do much better than the full log model. 
 
 ## Results
 
-Comparing the models we have tried so far, we see that there is no clear winner. The full additive model does seem to be the logical choice as it has performance comparable to the interaction model but much less predictors. However, the anova test, the adjusted $R^2$ and the LOOCV-RMSE numbers all suggest that the full interaction model is the best. 
-```{r}
-table = data.frame(Model = c("Interaction","Full Add", "Add without Collinear Preds"),
-         Adj_R_Squared = c(summary(selected_int_model)$adj.r.squared, 
-                           summary(full_add_model)$adj.r.squared, 
-                           summary(selected_no_coll)$adj.r.square),
+Comparing all the models we have tried so far:
+```{r warning=FALSE}
+table = data.frame(Model = c("Full Additive", "Add w/o Collinear Preds", "Full Add Log Res/Pred", "Selected Add Log Res/Pred"),
+         Adj_R_Squared = c(summary(full_add_model)$adj.r.squared, 
+                           summary(selected_no_coll)$adj.r.squared, 
+                           summary(add_log)$adj.r.square,
+                           summary(selected_add_log)$adj.r.square
+                          ),
          
-         Loocv_RMSE = c(calc_loocv_rmse(selected_int_model),
-                        calc_loocv_rmse(full_add_model),
-                        calc_loocv_rmse(selected_no_coll)),
+         Train_RMSE = c(sqrt(mean((kc_train_data$price - predict(full_add_model, kc_train_data)) ^ 2)),
+                        sqrt(mean((kc_train_data$price - predict(selected_no_coll, kc_train_data)) ^ 2)),
+                        sqrt(mean((kc_train_data_infl_rmvd$price - exp(predict(add_log, kc_train_data_infl_rmvd))) ^ 2)),
+                        sqrt(mean((kc_train_data_infl_rmvd$price - exp(predict(selected_add_log, kc_train_data_infl_rmvd))) ^ 2))
+                      ),
          
-         Number_Predictors = c(length(coef(selected_int_model)) - 1, 
-                               length(coef(full_add_model)) - 1,
-                               length(coef(selected_no_coll)) - 1))
+         Test_RMSE = c(sqrt(mean((kc_test_data$price - predict(full_add_model, kc_test_data)) ^ 2)),
+                        sqrt(mean((kc_test_data$price - predict(selected_no_coll, kc_test_data)) ^ 2)),
+                        sqrt(mean((kc_test_data$price - exp(predict(add_log, kc_test_data))) ^ 2)),
+                        sqrt(mean((kc_test_data$price - exp(predict(selected_add_log, kc_test_data))) ^ 2))
+                      ),
+         
+         Number_Predictors = c(length(coef(full_add_model)) - 1, 
+                               length(coef(selected_no_coll)) - 1,
+                               length(coef(add_log)) - 1,
+                               length(coef(selected_add_log)) - 1)
+         )
 
 kable(table,caption="Model Selection Table")
 ```
@@ -368,9 +409,6 @@ kable(table,caption="Model Selection Table")
 
 ## Discussion
 
-Since the goal of this project is to predict house prices, we will choose the model with the least errors, which is the full interaction model. It might be harder to interpret due to the number of predictions, but it performs slightly better than the full additive model without overfitting. 
-
-
-
+Since the goal of this project is to predict house prices, we will choose the model with the least errors, which is the selected log model with the response and some predictors transformed and no influential observations. It might be harder to interpret due to the number of predictions, but it performs better than the full additive model without overfitting.  
 
 
